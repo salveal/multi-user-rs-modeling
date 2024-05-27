@@ -11,7 +11,7 @@ from trecs.random import Generator
 from mtu_creators import NewItemFactory
 from mtu_metrics import (
     InteractionTracker,
-    RMSEMeasurementFixed,
+    RMSEMeasurement,
     MeanInteractionDistance,
     SimilarUserInteractionSimilarity,
     MeanDistanceSimUsers
@@ -80,7 +80,7 @@ def run_ideal_sim(user_prefs, true_utils, pairs, init_params, args, rng):
     metrics = [
         InteractionTracker(),
         # InteractionSpread(), no es tan útil, es mostly random
-        RMSEMeasurementFixed(),
+        RMSEMeasurement(),
         InteractionSimilarity(pairs),
         MeanInteractionDistance(pairs),
     ]
@@ -127,7 +127,7 @@ def run_sim(item_attrs, pairs, ideal_interaction_history, init_params, args, rng
 
     metrics = [
         # InteractionSpread(), no es tan útil, es mostly random
-        RMSEMeasurementFixed(),
+        RMSEMeasurement(),
         InteractionSimilarity(pairs),
         MeanInteractionDistance(pairs),
         SimilarUserInteractionSimilarity(ideal_interaction_history),

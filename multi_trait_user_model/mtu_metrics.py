@@ -187,7 +187,7 @@ class MeanDistanceSimUsers(Measurement):
 """
 Custom metrics
 """
-class RMSEMeasurementFixed(Measurement):
+class RMSEMeasurement(Measurement):
     def __init__(self, verbose=False):
         Measurement.__init__(self, "rmse", verbose)
     
