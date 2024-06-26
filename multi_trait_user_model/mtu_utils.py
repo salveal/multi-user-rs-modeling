@@ -1,10 +1,34 @@
 from collections import defaultdict
 import numpy as np
 from trecs.matrix_ops import inner_product
+from sklearn.metrics.pairwise import cosine_similarity
 
 """
 Functions taken from algo_confounding
 """
+def gaussian_similarity(arr, sigma=1.0):
+    """
+    Computes the Gaussian similarity matrix for an array of shape (N, 1).
+    
+    Parameters:
+    arr (numpy.ndarray): Input array of shape (N, 1).
+    sigma (float): The standard deviation of the Gaussian function.
+    
+    Returns:
+    numpy.ndarray: Gaussian similarity matrix of shape (N, N).
+    """
+    # Ensure the input is a 2D array with shape (N, 1)
+    if arr.ndim == 1:
+        arr = arr[:, np.newaxis]
+    
+    # Compute the pairwise squared Euclidean distances
+    dist_matrix = np.abs(arr - arr.T)
+    
+    # Compute the Gaussian similarity
+    sim_matrix = np.exp(-dist_matrix**2 / (2 * sigma**2))
+
+    return sim_matrix
+
 def mu_sigma_to_alpha_beta(mu, sigma):
     """ For Chaney's custom Beta' function, we convert
         a mean and variance to an alpha and beta parameter
@@ -27,6 +51,18 @@ def gen_social_network(user_prefs):
         num_connected = (user_cov >= thresh).any(axis=1).sum()
         if num_connected == num_users:
             return (user_cov >= thresh).astype(int) # final adjacency matrix
+    raise RuntimeError("Could not find a suitable threshold.")
+
+def gen_social_network_1_attr(user_prefs):
+    user_sim = gaussian_similarity(user_prefs)
+    np.fill_diagonal(user_sim, 0.0)
+    possible_thresholds = np.sort(user_sim.flatten())[::-1]
+    user_connections = None
+    num_users = user_prefs.shape[0]
+    for thresh in possible_thresholds[num_users:]:
+        num_connected = (user_sim >= thresh).any(axis=1).sum()
+        if num_connected == num_users:
+            return (user_sim >= thresh).astype(int) # final adjacency matrix
     raise RuntimeError("Could not find a suitable threshold.")
 
 def calculate_avg_jaccard(pairs, interactions):
@@ -123,3 +159,50 @@ def exclude_new_items(num_items_per_iter):
             predicted_scores[:, :] = float('-inf')
         return predicted_scores
     return score_fn
+
+def distances_from_users_to_mean_user(item_attrs, interaction_hist):
+    item_attrs_interactions = np.transpose(item_attrs[:, interaction_hist], (1,2,0))
+    mean_item_attrs_interactions = item_attrs_interactions.mean(axis=1)
+    mean_mean_item_attrs_interactions = mean_item_attrs_interactions.mean(axis=0)
+    mean_mean_item_attrs_interactions_reshaped = np.tile(mean_mean_item_attrs_interactions[np.newaxis, :], (mean_item_attrs_interactions.shape[0], 1))
+    distances_from_means_to_mean_mean = np.linalg.norm(mean_item_attrs_interactions - mean_mean_item_attrs_interactions_reshaped, axis=1)
+    return distances_from_means_to_mean_mean
+
+def measures_of_distances_from_consumed_items_to_mean_item(item_attrs, interaction_hist):
+    item_attrs_interactions = np.transpose(item_attrs[:, interaction_hist], (1,2,0))
+    mean_item_attrs_interactions = item_attrs_interactions.mean(axis=1)
+    mean_item_attrs_interactions_reshaped = np.tile(mean_item_attrs_interactions[:, np.newaxis, :], (1, item_attrs_interactions.shape[1], 1))
+    distances_from_attrs_to_means = np.linalg.norm(item_attrs_interactions - mean_item_attrs_interactions_reshaped, axis=2)
+    mean_distances_from_attrs_to_means = distances_from_attrs_to_means.mean(axis=1)
+    var_distances_from_attrs_to_means = np.var(distances_from_attrs_to_means, axis=1)
+    return mean_distances_from_attrs_to_means, var_distances_from_attrs_to_means
+
+def get_inter_user_metrics(item_attrs, interaction_hist):
+    distances_from_means_to_mean_mean = distances_from_users_to_mean_user(item_attrs, interaction_hist)
+    inter_user_mean_dispersion = distances_from_means_to_mean_mean.mean()
+    inter_user_diversity = np.var(distances_from_means_to_mean_mean)
+    return inter_user_mean_dispersion, inter_user_diversity
+
+def get_intra_user_metrics(item_attrs, interaction_hist):
+    mean_distances_from_attrs_to_means, var_distances_from_attrs_to_means = measures_of_distances_from_consumed_items_to_mean_item(item_attrs, interaction_hist)
+    intra_user_mean_dispersion = mean_distances_from_attrs_to_means.mean()
+    intra_user_dispersion_variance = np.var(mean_distances_from_attrs_to_means)
+    intra_user_diversity = var_distances_from_attrs_to_means.mean()
+    return intra_user_mean_dispersion, intra_user_dispersion_variance, intra_user_diversity
+
+def get_sim_users_pairs(user_prefs, rng):
+    sim_matrix = cosine_similarity(user_prefs, user_prefs)
+    # set diagonal entries to zero
+    num_users = sim_matrix.shape[0]
+    sim_matrix[np.arange(num_users), np.arange(num_users)] = 0
+    # add random perturbation to break ties
+    sim_tiebreak = np.zeros(
+        sim_matrix.shape, dtype=[("score", "f8"), ("random", "f8")]
+    )
+    sim_tiebreak["score"] = sim_matrix
+    sim_tiebreak["random"] = rng.random(sim_matrix.shape)
+    # array where element x at index i represents the "most similar" user to user i
+    closest_users = np.argsort(sim_tiebreak, axis=1, order=["score", "random"])[:, -1]
+    pairs = list(enumerate(closest_users))
+
+    return pairs

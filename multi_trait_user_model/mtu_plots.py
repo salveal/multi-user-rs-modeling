@@ -25,6 +25,8 @@ def transform_relative_to_ideal(train_results, metric_key, model_keys, absolute_
             continue
 
         abs_dist = np.array(train_results[metric_key][model_key])
+        print("abs_dist", abs_dist)
+        print("ideal_dist", ideal_dist)
         if absolute_measure:
             abs_dist = abs_dist - ideal_dist
         relative_dist[metric_key][model_key] = abs_dist
@@ -44,7 +46,7 @@ def graph_metrics_and_models(train_results, metric_keys, model_keys, mean_sigma=
         if me == "rmse":
             plt.yscale('log')
         results = train_results
-        metric_independent_from_ideal = not (me == "similar_user_jaccard" or me == "sim_user_dist")
+        metric_independent_from_ideal = not "relative" in me
         if relative_to_ideal:
             results = transform_relative_to_ideal(results, me, model_keys, metric_independent_from_ideal)
         else:

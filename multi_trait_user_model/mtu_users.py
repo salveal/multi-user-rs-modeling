@@ -88,16 +88,17 @@ class MultiTraitUsers(ChaneyUsers):
             self.user_interactions = np.hstack([self.user_interactions, interactions_col])
         
         true_scores_from_interactions = self.scores_after_interaction[np.arange(self.scores_after_interaction.shape[0]), interactions]
-        threshold = 0.3 # ??? debe haber mejor forma de hacer esto
+        threshold = 1.0 # ??? debe haber mejor forma de hacer esto
         for i in range(true_scores_from_interactions.shape[0]):
             if true_scores_from_interactions[i] > threshold:
                 connected_indices = np.where(self.social_network[i] == 1)[0]
                 for index in connected_indices:
-                    if not self.repeat_interactions:
-                        if interactions[i] not in self.user_interactions[index]:
+                    if interactions[i] not in self.shared_items[index]:
+                        if not self.repeat_interactions:
+                            if interactions[i] not in self.user_interactions[index]:
+                                self.shared_items[index].append(interactions[i])
+                        else:
                             self.shared_items[index].append(interactions[i])
-                    else:
-                        self.shared_items[index].append(interactions[i])
         
         # print("shared items:", self.shared_items)
         return interactions

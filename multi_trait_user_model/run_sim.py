@@ -1,6 +1,5 @@
 import numpy as np
 from collections import defaultdict
-from trecs.metrics import InteractionSimilarity
 from trecs.models import (
     ContentFiltering,
     PopularityRecommender,
@@ -12,9 +11,31 @@ from mtu_creators import NewItemFactory
 from mtu_metrics import (
     InteractionTracker,
     RMSEMeasurement,
-    MeanInteractionDistance,
-    SimilarUserInteractionSimilarity,
-    MeanDistanceSimUsers
+    UserJaccard,
+    UserMeanDistance,
+    SimilarUserJaccard,
+    SimilarUserMeanDistance,
+    TrueSimilarUserJaccard,
+    TrueSimilarUserMeanDistance,
+    SimilarUserJaccardRelative,
+    SimilarUserMeanDistanceRelative,
+
+    InterUserMeanDispersion,
+    InterUserDiversity,
+    IntraUserMeanDispersion,
+    IntraUserDispersionVariance,
+    IntraUserDiversity,
+    AnwarFilterBubbleEffect,
+    AnwarHomogeneity,
+
+    MeanUtilityPerIteration,
+    MeanUtilityPerIterationIncrement,
+    VarUtilityPerIteration,
+
+    MeanTotalUserUtility,
+    VarTotalUserUtility,
+
+    GiniCoefficient
 )
 from mtu_rs import (
     IdealRecommender,
@@ -27,7 +48,11 @@ from mtu_utils import (
     gen_social_network,
     interleave_new_items,
     perfect_scores,
-    exclude_new_items
+    exclude_new_items,
+    get_sim_users_pairs,
+    gen_social_network_1_attr,
+    distances_from_users_to_mean_user,
+    measures_of_distances_from_consumed_items_to_mean_item,
 )
 import argparse
 import os
@@ -54,7 +79,7 @@ def init_sim_state(true_scores, noisy_scores, item_representation, social_networ
     empty_item_set = np.array([]).reshape((args["num_attrs"], 0))
     return u, item_factory, empty_item_set
 
-def run_ideal_sim(user_prefs, true_utils, pairs, init_params, args, rng):
+def run_ideal_sim(user_prefs, true_utils, sim_users_pairs, random_pairs, init_params, args, rng):
     u, item_factory, empty_items = init_sim_state(**init_params, args=args)
     if not args["repeated_training"]:
         post_startup_num_items_per_iter = (args["startup_iters"] + 1) * args["new_items_per_iter"]
@@ -80,22 +105,44 @@ def run_ideal_sim(user_prefs, true_utils, pairs, init_params, args, rng):
     metrics = [
         InteractionTracker(),
         # InteractionSpread(), no es tan útil, es mostly random
-        RMSEMeasurement(),
-        InteractionSimilarity(pairs),
-        MeanInteractionDistance(pairs),
+        UserJaccard(random_pairs, name="random_users_jaccard"),
+        UserMeanDistance(random_pairs, name="random_users_mean_dist"),
+        UserJaccard(sim_users_pairs, name="true_sim_users_jaccard"),
+        UserMeanDistance(sim_users_pairs, name="true_sim_users_mean_dist"),
+        SimilarUserJaccard(),
+        SimilarUserMeanDistance(),
+
+        InterUserMeanDispersion(),
+        InterUserDiversity(),
+        IntraUserMeanDispersion(),
+        IntraUserDispersionVariance(),
+        IntraUserDiversity(),
+        AnwarFilterBubbleEffect(),
+        AnwarHomogeneity(),
+
+        MeanUtilityPerIteration(),
+        MeanUtilityPerIterationIncrement(),
+        VarUtilityPerIteration(),
+
+        MeanTotalUserUtility(),
+        VarTotalUserUtility(),
+
+        GiniCoefficient()
     ]
     run_params = {
         "random_items_per_iter": args["new_items_per_iter"],
         "vary_random_items_per_iter": False
     }
     m.add_metrics(*metrics)
+    m.add_state_variable(m.users.actual_user_profiles)
+    m.add_state_variable(m.users_hat)
     m.startup_and_train(timesteps=args["startup_iters"])
     m.set_num_items_per_iter(post_startup_num_items_per_iter)
     m.run(timesteps=args["total_iters"] - args["startup_iters"], train_between_steps=args["repeated_training"], **run_params)
     m.close()
     return m
 
-def run_sim(item_attrs, pairs, ideal_interaction_history, init_params, args, rng, model=ContentFiltering, user_representation=None):
+def run_sim(item_attrs, sim_users_pairs, random_pairs, ideal_interaction_history, init_params, args, rng, model=ContentFiltering, user_representation=None):
     u, item_factory, empty_items = init_sim_state(**init_params, args=args)
     if not args["repeated_training"]:
         post_startup_num_items_per_iter = (args["startup_iters"] + 1) * args["new_items_per_iter"]
@@ -119,25 +166,47 @@ def run_sim(item_attrs, pairs, ideal_interaction_history, init_params, args, rng
             if model != ImplicitMF:
                 model_params["num_attributes"] = args["num_attrs"]
             else:
-                model_params["num_latent_factors"] = args["num_attrs"]
+                model_params["num_latent_factors"] = args["num_attrs"] if args["num_attrs"] > 2 else 10
         else:
             model_params["user_representation"] = user_representation
     
     m = model(**model_params)
 
     metrics = [
+        InteractionTracker(),
         # InteractionSpread(), no es tan útil, es mostly random
-        RMSEMeasurement(),
-        InteractionSimilarity(pairs),
-        MeanInteractionDistance(pairs),
-        SimilarUserInteractionSimilarity(ideal_interaction_history),
-        MeanDistanceSimUsers(ideal_interaction_history, item_attrs)
+        UserJaccard(random_pairs, name="random_users_jaccard"),
+        UserMeanDistance(random_pairs, name="random_users_mean_dist"),
+        UserJaccard(sim_users_pairs, name="true_sim_users_jaccard"),
+        UserMeanDistance(sim_users_pairs, name="true_sim_users_mean_dist"),
+        SimilarUserJaccard(),
+        SimilarUserMeanDistance(),
+        SimilarUserJaccardRelative(ideal_interaction_history),
+        SimilarUserMeanDistanceRelative(ideal_interaction_history, item_attrs),
+
+        InterUserMeanDispersion(),
+        InterUserDiversity(),
+        IntraUserMeanDispersion(),
+        IntraUserDispersionVariance(),
+        IntraUserDiversity(),
+        AnwarFilterBubbleEffect(),
+        AnwarHomogeneity(),
+
+        MeanUtilityPerIteration(),
+        MeanUtilityPerIterationIncrement(),
+        VarUtilityPerIteration(),
+
+        MeanTotalUserUtility(),
+        VarTotalUserUtility(),
+
+        GiniCoefficient()
     ]
     run_params = {
         "random_items_per_iter": args["new_items_per_iter"],
         "vary_random_items_per_iter": False
     }
     m.add_metrics(*metrics)
+    m.add_state_variable(m.users.actual_user_profiles)
     m.add_state_variable(m.users_hat)
     m.startup_and_train(timesteps=args["startup_iters"], no_new_items=False)
     m.set_num_items_per_iter(post_startup_num_items_per_iter)
@@ -202,8 +271,12 @@ if __name__ == "__main__":
 
     for sim_index in range(args["num_sims"]):
         # generate user preferences and item attributes
-        user_prefs = rng.dirichlet(user_params[sim_index, :], size=args["num_users"])
-        item_attrs = rng.dirichlet(item_params[sim_index, :], size=args["num_items"])
+        if args["num_attrs"] > 1:
+            user_prefs = rng.dirichlet(user_params[sim_index, :], size=args["num_users"])
+            item_attrs = rng.dirichlet(item_params[sim_index, :], size=args["num_items"])
+        else:
+            user_prefs = rng.normal(0, 0.1, size=args["num_users"]).reshape((-1, 1))
+            item_attrs = rng.normal(0, 0.1, size=args["num_items"]).reshape((-1, 1))
 
         # mean of the utility distribution
         true_utils_mu = user_prefs @ item_attrs.T
@@ -215,13 +288,17 @@ if __name__ == "__main__":
         assert true_util.min() >= 0 and true_util.max() <= 1
 
         # calculate known utility for each user
-        alpha, beta = mu_sigma_to_alpha_beta(args["mu_n"], args["sigma"]) # parameters for beta function governing percentage of utility known to users
+        alpha, beta = mu_sigma_to_alpha_beta(args["mu_n"], 1e-1) # parameters for beta function governing percentage of utility known to users
         perc_known = rng.beta(alpha, beta, size=(args["num_users"], args["num_items"]))
         known_util = true_util * perc_known
 
         # add all synthetic data to list
         users.append(user_prefs)
-        social_networks.append(gen_social_network(user_prefs))
+        if args["num_attrs"] > 1:
+            social_networks.append(gen_social_network(user_prefs))
+        else:
+            soc = gen_social_network_1_attr(user_prefs)
+            social_networks.append(soc)
         items.append(item_attrs)
         true_utils.append(true_util)
         known_utils.append(known_util)
@@ -231,10 +308,46 @@ if __name__ == "__main__":
     ##  running simulations  ##
     ###########################
         
-    model_keys = ["ideal", "content", "chaney_content", "pop", "mf", "sf", "random"]
-    #ideal_model_metric_list = ["interaction_spread", "mse", "interaction_similarity", "mean_interaction_dist"]
-    metric_list = ["rmse", "interaction_similarity", "mean_interaction_dist", "similar_user_jaccard", "sim_user_dist"]
+    model_keys = [
+        "ideal",
+        "content",
+        "chaney_content",
+        "pop",
+        "mf",
+        "sf",
+        "random"
+    ]
+    metric_list = [
+        "random_users_jaccard",
+        "random_users_mean_dist",
+        "true_sim_users_jaccard",
+        "true_sim_users_mean_dist",
+        "sim_user_jaccard",
+        "sim_user_mean_dist",
+        "sim_user_jaccard_relative",
+        "sim_user_mean_dist_relative",
+        "inter_user_mean_dispersion",
+        "inter_user_diversity",
+        "intra_user_mean_dispersion",
+        "intra_user_dispersion_variance",
+        "intra_user_diversity",
+        "anwar_fbe",
+        "anwar_homogeneity",
+        "mean_utility",
+        "mean_utility_increment",
+        "var_utility",
+        "mean_total_user_utility",
+        "var_total_user_utility",
+        "gini"
+        ]
+    user_metric_list = [
+        "user_distance_to_mean",
+        "user_mean_distance_to_consumed_items",
+        "user_variance_distance_to_consumed_items",
+        "user_total_utility",
+    ]
     result_metrics = {k: defaultdict(list) for k in metric_list}
+    result_user_metrics = {k: defaultdict(list) for k in user_metric_list}
     models = {}
 
     print("Running simulations...👟")
@@ -247,42 +360,51 @@ if __name__ == "__main__":
         item_representation = items[i].T
         social_network = social_networks[i]
 
-        pairs = [rng.choice(args["num_users"], 2, replace=False) for _ in range(800)]
+        sim_users_pairs = get_sim_users_pairs(true_prefs, rng)
+        random_pairs = get_sim_users_pairs(np.zeros(true_prefs.shape), rng)
 
         init_params = {
             "true_scores": true_scores,
             "noisy_scores": noisy_scores,
             "item_representation": item_representation,
             "social_network": social_network,
-            "traits": np.array([0.34, 0.33, 0.33]),
+            "traits": np.array([1.0, 0.0, 0.0]),
         }
 
         print("Running ideal:")
-        models["ideal"] = run_ideal_sim(true_prefs, true_scores, pairs, init_params, args, rng)
+        models["ideal"] = run_ideal_sim(true_prefs, true_scores, sim_users_pairs, random_pairs, init_params, args, rng)
         ideal_interaction_history = np.hstack(models["ideal"].get_measurements()["interaction_history"][1:])
         # ideal_interaction_history.shape = (total_iters, num_users, 1)
 
         print("Running content:")
-        models["content"] = run_sim(item_representation, pairs, ideal_interaction_history, init_params, args, rng, model=ContentFiltering)
+        models["content"] = run_sim(item_representation, sim_users_pairs, random_pairs, ideal_interaction_history, init_params, args, rng, model=ContentFiltering)
         print("Running chaney_content:")
-        models["chaney_content"] = run_sim(item_representation, pairs, ideal_interaction_history, init_params, args, rng, model=ChaneyContent)
+        models["chaney_content"] = run_sim(item_representation, sim_users_pairs, random_pairs, ideal_interaction_history, init_params, args, rng, model=ChaneyContent)
         print("Running pop:")
-        models["pop"] = run_sim(item_representation, pairs, ideal_interaction_history, init_params, args, rng, model=PopularityRecommender)
+        models["pop"] = run_sim(item_representation, sim_users_pairs, random_pairs, ideal_interaction_history, init_params, args, rng, model=PopularityRecommender)
         print("Running mf:")
-        models["mf"] = run_sim(item_representation, pairs, ideal_interaction_history, init_params, args, rng, model=ImplicitMF)
+        models["mf"] = run_sim(item_representation, sim_users_pairs, random_pairs, ideal_interaction_history, init_params, args, rng, model=ImplicitMF)
         print("Running sf:")
-        models["sf"] = run_sim(item_representation, pairs, ideal_interaction_history, init_params, args, rng, model=SocialFiltering, user_representation=social_network)
+        models["sf"] = run_sim(item_representation, sim_users_pairs, random_pairs, ideal_interaction_history, init_params, args, rng, model=SocialFiltering, user_representation=social_network)
         print("Running random:")
-        models["random"] = run_sim(item_representation, pairs, ideal_interaction_history, init_params, args, rng, model=RandomRecommender)
+        models["random"] = run_sim(item_representation, sim_users_pairs, random_pairs, ideal_interaction_history, init_params, args, rng, model=RandomRecommender)
 
         print("Getting results...")
         for model_key in model_keys:
             model = models[model_key]
             for metric_key in metric_list:
-                if not (model_key == "ideal" and (metric_key == "similar_user_jaccard" or metric_key == "sim_user_dist")):
+                if not (model_key == "ideal" and "relative" in metric_key):
                     measurements = model.get_measurements()[metric_key][1:]
-                    #print("For simulation", i, "model", model_key, "and metric", metric_key, "the result is", measurements)
                     result_metrics[metric_key][model_key].append(measurements)
+            interaction_history = np.hstack(model.get_measurements()["interaction_history"][1:])
+            distances_to_mean = distances_from_users_to_mean_user(item_representation, interaction_history)
+            mean_dist_to_items, var_dist_to_items = measures_of_distances_from_consumed_items_to_mean_item(item_representation, interaction_history)
+            utilities = np.array(true_scores)[np.arange(np.array(true_scores).shape[0]), interaction_history.T].T
+            total_user_utility = utilities.sum(axis=1)
+            result_user_metrics["user_distance_to_mean"][model_key].append(distances_to_mean)
+            result_user_metrics["user_mean_distance_to_consumed_items"][model_key].append(mean_dist_to_items)
+            result_user_metrics["user_variance_distance_to_consumed_items"][model_key].append(var_dist_to_items)
+            result_user_metrics["user_total_utility"][model_key].append(total_user_utility)
         print("")
     
 
