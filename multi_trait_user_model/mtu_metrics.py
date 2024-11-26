@@ -297,6 +297,8 @@ class SimilarUserJaccardRelative(Measurement):
         # generate cosine similarity matrix for all users
         assert recommender.users_hat.get_timesteps() == self.timestep + 1 # ensure that the users_hat variable is storing copies at each timestep
         user_representation = recommender.users_hat.state_history[-1]
+        print("user_representation", user_representation)
+        print("user_representation.shape", user_representation.shape)
         pairs = get_sim_users_pairs(user_representation, self.rng)
         # calculate average jaccard similarity
         ideal_similarity = calculate_avg_jaccard(pairs, self.ideal_hist[:, :(self.timestep + 1)]) # compare
@@ -397,6 +399,7 @@ class InterUserMeanDispersion(Measurement):
             self.interaction_hist = np.copy(interactions).reshape((-1, 1))
         else:
             self.interaction_hist = np.hstack([self.interaction_hist, interactions.reshape((-1, 1))])
+        #print("InterUserMeanDispersion, interactions", interactions)
         inter_user_mean_dispersion, _ = get_inter_user_metrics(recommender.actual_item_attributes, self.interaction_hist)
         self.observe(inter_user_mean_dispersion)
 
@@ -509,6 +512,21 @@ class AnwarHomogeneity(Measurement):
         _, inter_user_diversity = get_inter_user_metrics(recommender.actual_item_attributes, self.interaction_hist)
         _, _, intra_user_diversity = get_intra_user_metrics(recommender.actual_item_attributes, self.interaction_hist)
         self.observe(1.0 / np.sqrt(inter_user_diversity**2 + intra_user_diversity**2))
+
+class UtilityTracker(Measurement):
+    def __init__(self, verbose=False):
+        self.true_scores = None
+        Measurement.__init__(self, "utility_history", verbose)
+    
+    def measure(self, recommender):
+        interactions = recommender.interactions
+        if recommender.interactions.size == 0:
+            # at beginning of simulation, there are no interactions
+            self.true_scores = recommender.users.scores_after_interaction
+            self.observe(None)
+            return
+        new_scores = self.true_scores[np.arange(self.true_scores.shape[0]), interactions]
+        self.observe(new_scores)
 
 class MeanUtilityPerIteration(Measurement):
     def __init__(self, verbose=False):
@@ -637,3 +655,22 @@ class GiniCoefficient(Measurement):
             #print("denominator", denominator)
         gini = - numerator / (recommender.num_items * denominator)
         self.observe(gini)
+
+class CumulativeListDecision(Measurement):
+    def __init__(self, name="decisions", verbose=False):
+        self.cumulative = None
+        super().__init__(name, verbose)
+    
+    def measure(self, recommender):
+        if recommender.interactions.size == 0:
+            self.cumulative = np.zeros(recommender.users.trait_distribution.shape[1])
+            #print(self.cumulative)
+            self.observe(None)
+            return
+        new_cumulative = np.zeros(self.cumulative.shape[0])
+        trait_count = np.bincount(recommender.users.chosen_lists[-1])
+        new_cumulative[:trait_count.shape[0]] = trait_count
+        self.cumulative += new_cumulative
+        #print(self.cumulative)
+        self.observe(self.cumulative)
+

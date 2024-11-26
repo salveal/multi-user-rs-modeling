@@ -1,13 +1,19 @@
 import numpy as np
-from trecs.models import ContentFiltering
+from trecs.models import ContentFiltering, BaseRecommender
 from scipy.optimize import nnls
+import scipy.sparse as sp
+from sklearn.decomposition import PCA
+import umap
+from sklearn import preprocessing
 
 """
 RSs taken from algo_confounding
 """
-class ChaneyContent(ContentFiltering):
+class TRECSChaneyContent(ContentFiltering):
     """
     Chaney ContentFiltering model which uses NNLS solver
+    It is actually identical to ContentFiltering and doesn't act
+    like the RS utilized in Chaney et al. 2018
     """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -61,3 +67,57 @@ class RandomRecommender(ContentFiltering):
         num_attr = self.items_hat.value.shape[0]
         item_representation = self.random_state.random((num_attr, num_items))
         return item_representation
+
+"""
+Custom RSs
+"""
+
+class ChaneyContent(ContentFiltering):
+    def __init__(self, item_rep_for_threshold, num_attributes, *args, **kwargs):
+        if item_rep_for_threshold.shape[0] > num_attributes:
+            item_rep_for_threshold = self.downscaling_attrs(item_rep_for_threshold, num_attributes)
+        possible_thresholds = np.sort(item_rep_for_threshold.flatten())[::-1]
+        total_items = item_rep_for_threshold.shape[1]
+        for thresh in possible_thresholds[total_items:]:
+            num_connected = (item_rep_for_threshold >= thresh).any(axis=0).sum()
+            if num_connected >= total_items:
+                self.item_attrs_binary_threshold = thresh
+                break
+        super().__init__(*args, **{'num_attributes': num_attributes, **kwargs})
+    
+    def process_new_items(self, new_items):
+        if new_items.shape[0] > self.predicted_item_attributes.shape[0]:
+            new_items = self.downscaling_attrs(new_items, self.predicted_item_attributes.shape[0])
+        binarized_new_items = (new_items >= self.item_attrs_binary_threshold).astype(float)
+        empty_interactions = sp.csr_matrix((self.num_users, binarized_new_items.shape[1]), dtype=int)
+        self.all_interactions = sp.hstack([self.all_interactions, empty_interactions])
+        return binarized_new_items
+
+    def downscaling_attrs(self, item_attrs, M):
+        k = M / np.gcd(item_attrs.shape[0], M)
+        extended_attrs = np.repeat(item_attrs, k, axis=0)
+        item_attrs = extended_attrs.reshape(-1, extended_attrs.shape[1], extended_attrs.shape[0] // M).mean(axis=2)
+        return item_attrs
+
+class ContentFilteringReduced(ContentFiltering):
+    def __init__(self, item_rep_for_threshold, num_attributes, dimred="pca", *args, **kwargs):
+        self.dimred = dimred
+        if self.dimred == "pca":
+            self.dimred_model = PCA(n_components=num_attributes) # probar t-SNE, UMAP
+            self.dimred_model.fit(item_rep_for_threshold.T)
+        elif self.dimred == "umap":
+            self.dimred_model = umap.UMAP(n_components=num_attributes)
+            self.dimred_model.fit(item_rep_for_threshold.T)
+        super().__init__(*args, **{'num_attributes': num_attributes, **kwargs})
+    
+    def process_new_items(self, new_items):
+        #print("new_items", new_items.T)
+        if self.dimred == "pca":
+            reduced_dimension_items = self.dimred_model.transform(new_items.T).T
+        elif self.dimred == "umap":
+            reduced_dimension_items = self.dimred_model.transform(new_items.T).T
+        #print("reduced_dimension_items", reduced_dimension_items.T)
+        empty_interactions = sp.csr_matrix((self.num_users, reduced_dimension_items.shape[1]), dtype=int)
+        self.all_interactions = sp.hstack([self.all_interactions, empty_interactions])
+        return reduced_dimension_items
+ 

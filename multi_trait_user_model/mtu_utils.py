@@ -2,6 +2,7 @@ from collections import defaultdict
 import numpy as np
 from trecs.matrix_ops import inner_product
 from sklearn.metrics.pairwise import cosine_similarity
+from trecs.random import Generator
 
 """
 Functions taken from algo_confounding
@@ -190,7 +191,7 @@ def get_intra_user_metrics(item_attrs, interaction_hist):
     intra_user_diversity = var_distances_from_attrs_to_means.mean()
     return intra_user_mean_dispersion, intra_user_dispersion_variance, intra_user_diversity
 
-def get_sim_users_pairs(user_prefs, rng):
+def get_sim_users_pairs(user_prefs, rng=Generator(1234), remove_duplicates=True):
     sim_matrix = cosine_similarity(user_prefs, user_prefs)
     # set diagonal entries to zero
     num_users = sim_matrix.shape[0]
@@ -204,5 +205,10 @@ def get_sim_users_pairs(user_prefs, rng):
     # array where element x at index i represents the "most similar" user to user i
     closest_users = np.argsort(sim_tiebreak, axis=1, order=["score", "random"])[:, -1]
     pairs = list(enumerate(closest_users))
+    #print("pairs:", len(pairs))
+    if remove_duplicates:
+        # remove duplicate distances
+        pairs = [tuple(x) if len(tuple(x)) == 2 else (tuple(x)[0], tuple(x)[0]) for x in set(frozenset(x) for x in pairs)]
+    #print("pairs 2:", len(pairs))
 
     return pairs
