@@ -674,3 +674,10 @@ class CumulativeListDecision(Measurement):
         #print(self.cumulative)
         self.observe(self.cumulative)
 
+class TraitTracker(Measurement):
+    def __init__(self, name="trait_history", verbose=False):
+        Measurement.__init__(self, name, verbose)
+
+    def measure(self, recommender):
+        trait_distribution = recommender.users.trait_distribution
+        self.observe(trait_distribution)

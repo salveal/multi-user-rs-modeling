@@ -1,5 +1,6 @@
 import numpy as np
 from trecs.components import Users, ActualUserScores
+from trecs.random import Generator
 
 """
 Classes taken from algo_confounding
@@ -23,10 +24,25 @@ class ChaneyUsers(Users):
 Custom Classes
 """
 class MultiTraitUsers(ChaneyUsers):
-    def __init__(self, num_users, true_scores, social_network, traits, *args, **kwargs):
-        self.trait_distribution = np.tile(traits, (num_users, 1))
-        self.trait_distribution[:, 0] += 1 - self.trait_distribution.sum(axis=1)
-        #print("self.trait_distribution",self.trait_distribution)
+    def __init__(self, num_users, true_scores, social_network, traits, seed, *args, **kwargs):
+        self.iteration_number = 0
+        self.traits = traits
+        self.feed_preference = np.tile(traits, (num_users, 1))
+        if -1 in traits:
+            self.total_sum_rand = 1 - traits[traits != -1].sum()
+            rng = Generator(seed)
+            random_traits = rng.dirichlet(np.ones((traits == -1).sum())*50, size=num_users)*self.total_sum_rand
+
+            # Just making RSs more powerful
+            if traits[0] == -1:
+                a = 0.05
+                p_random_traits = np.copy(random_traits)
+                random_traits[:,0] += (self.total_sum_rand - random_traits[:,0])*a
+                ra = (1 - random_traits[:,0]) / (1 - p_random_traits[:,0])
+                random_traits[:,1:] = np.array([random_traits[:,1:][i] * ra[i] for i in range(ra.shape[0])])
+            
+            self.feed_preference[:, np.all(self.feed_preference == -1, axis=0)] = random_traits
+        self.feed_preference[:, 0] += 1 - self.feed_preference.sum(axis=1)
         self.total_item_interactions = np.array([], dtype=int)
         self.interactions_previous_iter = np.array([], dtype=int)
         self.new_feed = np.array([], dtype=int)
@@ -50,7 +66,10 @@ class MultiTraitUsers(ChaneyUsers):
             prev_interacted_scores = self.actual_user_scores.get_item_scores(self.user_interactions)
             self.actual_user_scores.set_item_scores_to_value(self.user_interactions, float("-inf"))
 
-        random_feed = np.array([self.rng.permutation(self.total_item_interactions.shape[0]) for _ in range(self.trait_distribution.shape[0])])
+        random_feed = np.array([self.rng.permutation(self.total_item_interactions.shape[0]) for _ in range(self.user_vector.shape[0])])
+        if not self.repeat_interactions:
+            random_feed = np.array([row[~np.isin(row, self.user_interactions[i])] for i, row in enumerate(random_feed)])
+        random_feed = random_feed.tolist()
 
         popular_items_tiebreak = np.zeros(
             self.total_item_interactions.shape, dtype=[("rank", "u4"), ("random", "f8")]
@@ -58,7 +77,7 @@ class MultiTraitUsers(ChaneyUsers):
         popular_items_tiebreak["rank"] = self.total_item_interactions
         popular_items_tiebreak["random"] = self.rng.random(self.total_item_interactions.shape)
         popular_feed = np.argsort(popular_items_tiebreak, order=["rank", "random"])[::-1]
-        resized_popular_feed = np.tile(popular_feed, (self.trait_distribution.shape[0], 1))
+        resized_popular_feed = np.tile(popular_feed, (self.user_vector.shape[0], 1))
         if not self.repeat_interactions:
             resized_popular_feed = np.array([row[~np.isin(row, self.user_interactions[i])] for i, row in enumerate(resized_popular_feed)])
         resized_popular_feed = resized_popular_feed.tolist()
@@ -70,9 +89,12 @@ class MultiTraitUsers(ChaneyUsers):
         trending_items_tiebreak["rank"] = self.interactions_previous_iter
         trending_items_tiebreak["random"] = self.rng.random(self.interactions_previous_iter.shape)
         trending_feed = np.argsort(trending_items_tiebreak, order=["rank", "random"])[::-1]
-        resized_trending_feed = np.tile(trending_feed, (self.trait_distribution.shape[0], 1)).tolist()
+        resized_trending_feed = np.tile(trending_feed, (self.user_vector.shape[0], 1))
+        if not self.repeat_interactions:
+            resized_trending_feed = np.array([row[~np.isin(row, self.user_interactions[i])] for i, row in enumerate(resized_trending_feed)])
+        resized_trending_feed = resized_trending_feed.tolist()
 
-        resized_new_feed = np.tile(self.new_feed, (self.trait_distribution.shape[0], 1)).tolist()
+        resized_new_feed = np.tile(self.new_feed, (self.user_vector.shape[0], 1)).tolist()
 
         ideal_feed = np.argsort(self.scores_after_interaction[:,:self.total_item_interactions.shape[0]])[:, ::-1]
 
@@ -83,8 +105,8 @@ class MultiTraitUsers(ChaneyUsers):
                        resized_new_feed[i],
                        [x[0] for x in self.shared_items[i]],
                        ideal_feed[i]
-                       ] for i in range(self.trait_distribution.shape[0])]
-        weighted_user_lists = [[self.attention_transform(self.actual_user_scores.value[np.repeat(i, len(user_lists[i][j])), user_lists[i][j]]) * self.trait_distribution[i][j] for j in range(len(user_lists[i]))] for i in range(len(user_lists))]
+                       ] for i in range(self.user_vector.shape[0])]
+        weighted_user_lists = [[self.attention_transform(self.actual_user_scores.value[np.repeat(i, len(user_lists[i][j])), user_lists[i][j]]) * self.feed_preference[i][j] for j in range(len(user_lists[i]))] for i in range(len(user_lists))]
         #print("user_lists[0] sr: ", user_lists[0][0][:min(len(user_lists[0][0]), 50)])
         #print("user_lists[0] pop: ", user_lists[0][1][:min(len(user_lists[0][1]), 50)])
         #print("user_lists[0] new: ", user_lists[0][2][:min(len(user_lists[0][2]), 50)])
@@ -101,7 +123,7 @@ class MultiTraitUsers(ChaneyUsers):
         interactions, chosen_list = self.get_chosen_items(user_lists, weighted_user_lists)
         #print("\nitem selected:", interactions[0])
         self.chosen_lists.append(chosen_list)
-
+        self.iteration_number += 1
         new_item_interactions = np.bincount(interactions)
         self.total_item_interactions[:len(new_item_interactions)] += new_item_interactions
         self.interactions_previous_iter = new_item_interactions
@@ -114,7 +136,6 @@ class MultiTraitUsers(ChaneyUsers):
             self.user_interactions = np.hstack([self.user_interactions, interactions_col])
         
         true_scores_from_interactions = self.scores_after_interaction[np.arange(self.scores_after_interaction.shape[0]), interactions]
-        iteration_number = len(self.chosen_lists)
         for i in range(true_scores_from_interactions.shape[0]):
             if true_scores_from_interactions[i] > self.sharing_threshold[i]:
                 connected_indices = np.where(self.social_network[i] == 1)[0]
@@ -135,7 +156,7 @@ class MultiTraitUsers(ChaneyUsers):
                             t = self.shared_items[j][[x[0] for x in self.shared_items[j]].index(interactions[i])]
                             self.shared_items[j][[x[0] for x in self.shared_items[j]].index(interactions[i])] = (t[0], t[1]+1)
                             self.shared_items[j].sort(key=lambda x: x[1], reverse=True)
-            self.sharing_threshold[i] = ((self.sharing_threshold[i]*(iteration_number - 1)) + true_scores_from_interactions[i]) / iteration_number
+            self.sharing_threshold[i] = ((self.sharing_threshold[i]*(self.iteration_number - 1)) + true_scores_from_interactions[i]) / self.iteration_number
         
         # print("shared items:", self.shared_items)
         return interactions
@@ -156,6 +177,8 @@ class MultiTraitUsers(ChaneyUsers):
     def get_chosen_items(self, ls, weighted_ls):
         interactions = []
         chosen_list = []
+        #a = 1/10
+        #w = []
         for i in range(len(ls)):
             maximum_values = []
             maximum_indices = []
@@ -167,9 +190,25 @@ class MultiTraitUsers(ChaneyUsers):
                     maximum_values.append(max(weighted_ls[i][j]))
                     maximum_indices.append(max(enumerate(weighted_ls[i][j]), key=lambda x: x[1])[0])
             selected_ls = max(enumerate(maximum_values), key=lambda x: x[1])[0]
+
+            if self.traits[selected_ls] == -1:
+                aa = 0.1 if self.iteration_number < 10 else 1
+                a = aa*0.0625*(self.scores_after_interaction[i,ls[i][selected_ls][maximum_indices[selected_ls]]] - max(weighted_ls[i][selected_ls]))
+                minus_one_indices = np.where(self.traits == -1)[0]
+                other_minus_one_indices = minus_one_indices[minus_one_indices != selected_ls]
+                previous_selected_trait_value = self.feed_preference[i][selected_ls]
+                self.feed_preference[i][selected_ls] += (self.total_sum_rand-self.feed_preference[i][selected_ls])*a
+                self.feed_preference[i][other_minus_one_indices] *= ((1 - self.feed_preference[i][selected_ls])/(1 - previous_selected_trait_value))
+                float_error = 1 - self.feed_preference[i].sum()
+                self.feed_preference[i][selected_ls] += float_error
+
             interactions.append(ls[i][selected_ls][maximum_indices[selected_ls]])
             chosen_list.append(selected_ls)
             _l = [x[0] for x in self.shared_items[i]]
             if ls[i][selected_ls][maximum_indices[selected_ls]] in _l:
                 self.shared_items[i].pop(_l.index(ls[i][selected_ls][maximum_indices[selected_ls]]))
+            #w.append(max(weighted_ls[i][selected_ls]))
+        #w = np.array(w)
+        #tru = self.scores_after_interaction[np.arange(self.scores_after_interaction.shape[0]), interactions]
+        #print("max(tru - w)", max(tru - w))
         return np.array(interactions, dtype=int), np.array(chosen_list, dtype=int)

@@ -11,6 +11,7 @@ from mtu_creators import NewItemFactory
 from mtu_metrics import (
     InteractionTracker,
     CumulativeListDecision,
+    TraitTracker,
     UtilityTracker,
 )
 from mtu_rs import (
@@ -105,6 +106,7 @@ def run_ideal_sim(user_prefs, true_utils, sim_users_pairs, random_pairs, init_pa
         InteractionTracker(),
         CumulativeListDecision(),
         UtilityTracker(),
+        TraitTracker(),
     ]
     run_params = {
         "random_items_per_iter": args["new_items_per_iter"],
@@ -161,6 +163,7 @@ def run_sim(item_attrs, sim_users_pairs, random_pairs, init_params, args, rng, m
         InteractionTracker(),
         CumulativeListDecision(),
         UtilityTracker(),
+        TraitTracker(),
     ]
     run_params = {
         "random_items_per_iter": args["new_items_per_iter"],
@@ -290,6 +293,7 @@ if __name__ == "__main__":
         "interaction_history",
         "decisions",
         "utility_history",
+        "trait_history",
         ]
     result_metrics = {k: defaultdict(list) for k in ["user_prefs", "item_attrs", *metric_list]}
     models = {}
