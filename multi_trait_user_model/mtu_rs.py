@@ -3,7 +3,6 @@ from trecs.models import ContentFiltering, BaseRecommender
 from scipy.optimize import nnls
 import scipy.sparse as sp
 from sklearn.decomposition import PCA
-import umap
 from sklearn import preprocessing
 
 """
@@ -99,25 +98,20 @@ class ChaneyContent(ContentFiltering):
         item_attrs = extended_attrs.reshape(-1, extended_attrs.shape[1], extended_attrs.shape[0] // M).mean(axis=2)
         return item_attrs
 
-class ContentFilteringReduced(ContentFiltering):
-    def __init__(self, item_rep_for_threshold, num_attributes, dimred="pca", *args, **kwargs):
-        self.dimred = dimred
-        if self.dimred == "pca":
-            self.dimred_model = PCA(n_components=num_attributes) # probar t-SNE, UMAP
+def ContentFilteringWithTags(num_tags):
+    class ContentFilteringReduced(ContentFiltering):
+        def __init__(self, item_rep_for_threshold, *args, **kwargs):
+            self.dimred_model = PCA(n_components=num_tags) # probar t-SNE, UMAP
             self.dimred_model.fit(item_rep_for_threshold.T)
-        elif self.dimred == "umap":
-            self.dimred_model = umap.UMAP(n_components=num_attributes)
-            self.dimred_model.fit(item_rep_for_threshold.T)
-        super().__init__(*args, **{'num_attributes': num_attributes, **kwargs})
-    
-    def process_new_items(self, new_items):
-        #print("new_items", new_items.T)
-        if self.dimred == "pca":
+            kwargs['num_attributes'] = num_tags
+            super().__init__(*args, **kwargs)
+        
+        def process_new_items(self, new_items):
+            #print("new_items", new_items.T)
             reduced_dimension_items = self.dimred_model.transform(new_items.T).T
-        elif self.dimred == "umap":
-            reduced_dimension_items = self.dimred_model.transform(new_items.T).T
-        #print("reduced_dimension_items", reduced_dimension_items.T)
-        empty_interactions = sp.csr_matrix((self.num_users, reduced_dimension_items.shape[1]), dtype=int)
-        self.all_interactions = sp.hstack([self.all_interactions, empty_interactions])
-        return reduced_dimension_items
+            #print("reduced_dimension_items", reduced_dimension_items.T)
+            empty_interactions = sp.csr_matrix((self.num_users, reduced_dimension_items.shape[1]), dtype=int)
+            self.all_interactions = sp.hstack([self.all_interactions, empty_interactions])
+            return reduced_dimension_items
+    return ContentFilteringReduced
  

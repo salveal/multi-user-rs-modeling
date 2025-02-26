@@ -526,6 +526,8 @@ class UtilityTracker(Measurement):
             self.observe(None)
             return
         new_scores = self.true_scores[np.arange(self.true_scores.shape[0]), interactions]
+        #print("new_scores", new_scores)
+        #print()
         self.observe(new_scores)
 
 class MeanUtilityPerIteration(Measurement):
@@ -663,7 +665,7 @@ class CumulativeListDecision(Measurement):
     
     def measure(self, recommender):
         if recommender.interactions.size == 0:
-            self.cumulative = np.zeros(recommender.users.trait_distribution.shape[1])
+            self.cumulative = np.zeros(recommender.users.feed_preference.shape[1])
             #print(self.cumulative)
             self.observe(None)
             return
@@ -679,5 +681,34 @@ class TraitTracker(Measurement):
         Measurement.__init__(self, name, verbose)
 
     def measure(self, recommender):
-        trait_distribution = recommender.users.trait_distribution
+        trait_distribution = recommender.users.feed_preference
         self.observe(trait_distribution)
+
+class RankTracker(Measurement):
+    def __init__(self, name="rank_history", verbose=False):
+        Measurement.__init__(self, name, verbose)
+
+    def measure(self, recommender):
+        if recommender.interactions.size == 0:
+            self.observe(None)
+            return
+        rank_distribution = np.copy(recommender.users.rank_chosen_items)
+        #print("rank_distribution", rank_distribution[-1])
+        #print()
+        self.observe(rank_distribution[-1])
+
+class UtilityRankTracker(Measurement):
+    def __init__(self, name="utility_rank_history", verbose=False):
+        Measurement.__init__(self, name, verbose)
+
+    def measure(self, recommender):
+        if recommender.interactions.size == 0:
+            self.observe(None)
+            return
+        items_shown = np.copy(recommender.items_shown)
+        vector_indices = np.array([[i] * items_shown.shape[1] for i in range(items_shown.shape[0])])
+        utility_distribution = recommender.users.scores_after_interaction[vector_indices, items_shown]
+        center_of_mass = np.sum(utility_distribution * np.arange(utility_distribution.shape[1]), axis=1) / np.sum(utility_distribution, axis=1)
+        #print("center_of_mass", center_of_mass)
+        #print()
+        self.observe(center_of_mass)

@@ -1,4 +1,6 @@
 import numpy as np
+import matplotlib.pyplot as plt
+from scipy.ndimage import gaussian_filter1d
 from collections import defaultdict
 from trecs.models import (
     ContentFiltering,
@@ -13,24 +15,26 @@ from mtu_metrics import (
     CumulativeListDecision,
     TraitTracker,
     UtilityTracker,
+    RankTracker,
+    UtilityRankTracker,
 )
 from mtu_rs import (
     IdealRecommender,
     ChaneyContent,
     RandomRecommender,
-    ContentFilteringReduced
+    ContentFilteringWithTags
 )
 from mtu_users import MultiTraitUsers
 from mtu_utils import (
     mu_sigma_to_alpha_beta,
     gen_social_network,
-    interleave_new_items,
     perfect_scores,
     exclude_new_items,
     get_sim_users_pairs,
     gen_social_network_1_attr,
     distances_from_users_to_mean_user,
     measures_of_distances_from_consumed_items_to_mean_item,
+    interleave_new_items as startp_interleave_fn
 )
 import argparse
 import os
@@ -42,16 +46,41 @@ import types
 warnings.simplefilter("ignore")
 
 
-def set_num_items_per_iter(self, num_items_per_iter):
-        """Change the number of items that will be shown
-        to each user per iteration.
-        """
-        if num_items_per_iter == "all":
-            self.num_items_per_iter = self.num_items - (self.indices < 0).sum(axis=1).max()
-            self.expand_items_per_iter = True
-        else:
-            self.expand_items_per_iter = False
-            self.num_items_per_iter = num_items_per_iter
+def interleave_new_items(new_items_per_iter, generator):
+    """ Chooses the most recent, newest items to interleave
+        with the recommendation set. This custom interleaving method
+        ensures that all of the most recently created items (i.e.,
+        the newest items) are the ones interleaved with the recommendations.
+    """
+    def interleaving_fn(k, item_indices):
+        num_users = item_indices.shape[0]
+        indices = item_indices[:, -new_items_per_iter:]
+        values = generator.random(indices.shape)
+        order = values.argsort(axis=1) # randomly sort indices within rows
+        rows = np.tile(np.arange(num_users).reshape((-1, 1)), indices.shape[1])
+        return indices[rows, order][:,-k:]
+    return interleaving_fn
+
+def set_set_num_items_per_iter(new_items_per_iter, random_items_per_iter):
+    """
+    Added the new_items_per_iter so that random items per iteration
+    can be distinct from new items each iteration.
+    """
+    def set_num_items_per_iter(self, num_items_per_iter):
+            """Change the number of items that will be shown
+            to each user per iteration. This function had to
+            be made since when setting T-RECS BaseRecommender
+            attribute repeated_items parameter to False it messed
+            this part and it was a nightmare to debug.
+            """
+            if num_items_per_iter == "all":
+                self.num_items_per_iter = self.num_items - (self.indices < 0).sum(axis=1).max() - new_items_per_iter + random_items_per_iter
+                self.expand_items_per_iter = True
+                #print("self.num_items_per_iter", self.num_items_per_iter)
+            else:
+                self.expand_items_per_iter = False
+                self.num_items_per_iter = num_items_per_iter
+    return set_num_items_per_iter
 
 def startup_and_train(self, timesteps=50, no_new_items=False, **kwargs):
     if self.is_verbose():
@@ -90,16 +119,22 @@ def run_ideal_sim(user_prefs, true_utils, sim_users_pairs, random_pairs, init_pa
         "num_items_per_iter": "all",
         "num_users": args["num_users"],
         "num_items": 0,
-        "interleaving_fn": interleave_new_items(rng),
+        "interleaving_fn": startp_interleave_fn(rng),
         "verbose": True,
         "seed": args["seed"]
     }
     model_params["user_representation"] = user_prefs
     model_params["score_fn"] = perfect_scores(args["new_items_per_iter"], true_utils)
 
+    run_params = {
+        "random_items_per_iter": args["rand_items_per_iter"], # THIS VALUE SHOULDN'T BE GREATER THAN args["new_items_per_iter"]
+        "vary_random_items_per_iter": False,
+        "repeated_items": False
+    }
+
     m = IdealRecommender(**model_params)
 
-    m.set_num_items_per_iter = types.MethodType(set_num_items_per_iter, m)
+    m.set_num_items_per_iter = types.MethodType(set_set_num_items_per_iter(0, 0), m)
     m.startup_and_train = types.MethodType(startup_and_train, m)
 
     metrics = [
@@ -107,22 +142,21 @@ def run_ideal_sim(user_prefs, true_utils, sim_users_pairs, random_pairs, init_pa
         CumulativeListDecision(),
         UtilityTracker(),
         TraitTracker(),
+        RankTracker(),
+        UtilityRankTracker()
     ]
-    run_params = {
-        "random_items_per_iter": args["new_items_per_iter"],
-        "vary_random_items_per_iter": False,
-        "repeated_items": False
-    }
     m.add_metrics(*metrics)
     m.add_state_variable(m.users.actual_user_profiles)
     m.add_state_variable(m.users_hat)
     m.startup_and_train(timesteps=args["startup_iters"], no_new_items=False, repeated_items=run_params["repeated_items"])
+    #m.set_num_items_per_iter = types.MethodType(set_set_num_items_per_iter(args["new_items_per_iter"], run_params["random_items_per_iter"]), m)
+    m.interleaving_fn = interleave_new_items(args["new_items_per_iter"], rng)
     m.set_num_items_per_iter(post_startup_num_items_per_iter)
     m.run(timesteps=args["total_iters"] - args["startup_iters"], train_between_steps=args["repeated_training"], **run_params)
     m.close()
     return m
 
-def run_sim(item_attrs, sim_users_pairs, random_pairs, init_params, args, rng, model=ContentFiltering, dimred="pca", user_representation=None):
+def run_sim(item_attrs, sim_users_pairs, random_pairs, init_params, args, rng, model=ContentFiltering, user_representation=None):
     u, item_factory, empty_items = init_sim_state(**init_params, args=args)
     if not args["repeated_training"]:
         post_startup_num_items_per_iter = (args["startup_iters"] + 1) * args["new_items_per_iter"]
@@ -136,7 +170,7 @@ def run_sim(item_attrs, sim_users_pairs, random_pairs, init_params, args, rng, m
         "num_items_per_iter": "all",
         "num_users": args["num_users"],
         "num_items": 0,
-        "interleaving_fn": interleave_new_items(rng),
+        "interleaving_fn": startp_interleave_fn(rng),
         "verbose": True,
         "seed": args["seed"]
     }
@@ -145,18 +179,22 @@ def run_sim(item_attrs, sim_users_pairs, random_pairs, init_params, args, rng, m
         if model != SocialFiltering:
             if model != ImplicitMF:
                 model_params["num_attributes"] = args["num_attrs"]
-                if model == ContentFilteringReduced:
-                    model_params["num_attributes"] = int((args["num_attrs"] * 13) // 20)
+                if model != RandomRecommender:
                     model_params["item_rep_for_threshold"] = item_attrs
-                    model_params["dimred"] = dimred
             else:
                 model_params["num_latent_factors"] = args["num_attrs"] if args["num_attrs"] > 2 else 10
         else:
             model_params["user_representation"] = user_representation
     
+    run_params = {
+        "random_items_per_iter": args["rand_items_per_iter"], # THIS VALUE SHOULDN'T BE GREATER THAN args["new_items_per_iter"]
+        "vary_random_items_per_iter": False,
+        "repeated_items": False
+    }
+
     m = model(**model_params)
 
-    m.set_num_items_per_iter = types.MethodType(set_num_items_per_iter, m)
+    m.set_num_items_per_iter = types.MethodType(set_set_num_items_per_iter(0, 0), m)
     m.startup_and_train = types.MethodType(startup_and_train, m)
 
     metrics = [
@@ -164,16 +202,15 @@ def run_sim(item_attrs, sim_users_pairs, random_pairs, init_params, args, rng, m
         CumulativeListDecision(),
         UtilityTracker(),
         TraitTracker(),
+        RankTracker(),
+        UtilityRankTracker(),
     ]
-    run_params = {
-        "random_items_per_iter": args["new_items_per_iter"],
-        "vary_random_items_per_iter": False,
-        "repeated_items": False
-    }
     m.add_metrics(*metrics)
     m.add_state_variable(m.users.actual_user_profiles)
     m.add_state_variable(m.users_hat)
     m.startup_and_train(timesteps=args["startup_iters"], no_new_items=False, repeated_items=run_params["repeated_items"])
+    #m.set_num_items_per_iter = types.MethodType(set_set_num_items_per_iter(args["new_items_per_iter"], run_params["random_items_per_iter"]), m)
+    m.interleaving_fn = interleave_new_items(args["new_items_per_iter"], rng)
     m.set_num_items_per_iter(post_startup_num_items_per_iter)
     m.run(timesteps=args["total_iters"] - args["startup_iters"], train_between_steps=args["repeated_training"], **run_params)
     m.close()
@@ -195,6 +232,7 @@ if __name__ == "__main__":
     parser.add_argument('--mu_n', type=float, default=0.98)
     parser.add_argument('--sigma', type=float, default=1e-5)
     parser.add_argument('--new_items_per_iter', type=int, default=10)
+    parser.add_argument('--rand_items_per_iter', type=int, default=10)
     parser.add_argument('--repeated_training', dest='repeated_training', action='store_true')
     parser.add_argument('--single_training', dest='repeated_training', action='store_false')
     parser.add_argument('--total_iters', type=int, default=100)
@@ -236,7 +274,7 @@ if __name__ == "__main__":
 
     rng = Generator(args["seed"])
 
-    user_params = rng.dirichlet(np.ones(args["num_attrs"]), size=args["num_sims"]) * 5.0
+    user_params = rng.dirichlet(np.ones(args["num_attrs"]), size=args["num_sims"]) * 10
     item_params = rng.dirichlet(np.ones(args["num_attrs"]) * 100, size=args["num_sims"]) * 0.1
 
     users, items, true_utils, known_utils, social_networks = [], [], [], [], []
@@ -275,6 +313,38 @@ if __name__ == "__main__":
         true_utils.append(true_util)
         known_utils.append(known_util)
     
+    ################################################
+    ##  checking user-item utility distributions  ##
+    ################################################
+
+    #Vsui = np.array(true_utils)
+
+    #item_values = np.sort(Vsui.sum(axis=1), axis=1)[:,::-1]
+    #plt.grid()
+    #plt.ylim(-5, 70)
+    #for v in item_values:
+    #    plt.plot(v, marker=',', markersize=1.5)
+    #plt.show()
+
+    #mean_item_values = item_values.mean(axis=0)
+    #plt.grid()
+    #plt.ylim(-5, 70)
+    #plt.plot(mean_item_values, marker=',', markersize=1.5, c='k')
+    #std = item_values.std(axis=0)
+    #mtus = np.arange(len(std))
+    #low = mean_item_values - 1. * std
+    #high = mean_item_values + 1. * std
+    #low = gaussian_filter1d(low, sigma=0.1)
+    #high = gaussian_filter1d(high, sigma=0.1)
+    #plt.fill_between(mtus, low, high, color='k', alpha=0.3)
+    #plt.show()
+
+    #user_values = np.sort(Vsui.sum(axis=2), axis=1)[:,::-1]
+    #plt.grid()
+    #plt.ylim(350, 630)
+    #for v in user_values:
+    #    plt.plot(v, marker=',', markersize=1.5)
+    #plt.show()
 
     ###########################
     ##  running simulations  ##
@@ -282,11 +352,11 @@ if __name__ == "__main__":
         
     model_keys = [
         "ideal",
-        #"content",
-        "content_reduced",
-        "pop",
+        "content_5",
+        #"content_10",
+        #"pop",
         "mf",
-        "sf",
+        #"sf",
         "random"
     ]
     metric_list = [
@@ -294,6 +364,8 @@ if __name__ == "__main__":
         "decisions",
         "utility_history",
         "trait_history",
+        "rank_history",
+        "utility_rank_history",
         ]
     result_metrics = {k: defaultdict(list) for k in ["user_prefs", "item_attrs", *metric_list]}
     models = {}
@@ -336,16 +408,16 @@ if __name__ == "__main__":
         #ideal_interaction_history = np.hstack(models["ideal"].get_measurements()["interaction_history"][1:])
         # ideal_interaction_history.shape = (total_iters, num_users, 1)
 
-        #print("Running content:")
-        #models["content"] = run_sim(item_representation, sim_users_pairs, random_pairs, ideal_interaction_history, init_params, args, rng, model=ContentFiltering)
-        print("Running content_reduced:")
-        models["content_reduced"] = run_sim(item_representation, sim_users_pairs, random_pairs, init_params, args, rng, dimred="pca", model=ContentFilteringReduced)
-        print("Running pop:")
-        models["pop"] = run_sim(item_representation, sim_users_pairs, random_pairs, init_params, args, rng, model=PopularityRecommender)
+        print("Running content 5:")
+        models["content_5"] = run_sim(item_representation, sim_users_pairs, random_pairs, init_params, args, rng, model=ContentFilteringWithTags(5))
+        #print("Running content 10:")
+        #models["content_10"] = run_sim(item_representation, sim_users_pairs, random_pairs, init_params, args, rng, model=ContentFilteringWithTags(10))
+        #print("Running pop:")
+        #models["pop"] = run_sim(item_representation, sim_users_pairs, random_pairs, init_params, args, rng, model=PopularityRecommender)
         print("Running mf:")
         models["mf"] = run_sim(item_representation, sim_users_pairs, random_pairs, init_params, args, rng, model=ImplicitMF)
-        print("Running sf:")
-        models["sf"] = run_sim(item_representation, sim_users_pairs, random_pairs, init_params, args, rng, model=SocialFiltering, user_representation=social_network)
+        #print("Running sf:")
+        #models["sf"] = run_sim(item_representation, sim_users_pairs, random_pairs, init_params, args, rng, model=SocialFiltering, user_representation=social_network)
         print("Running random:")
         models["random"] = run_sim(item_representation, sim_users_pairs, random_pairs, init_params, args, rng, model=RandomRecommender)
 
