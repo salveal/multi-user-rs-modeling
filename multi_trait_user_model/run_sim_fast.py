@@ -353,10 +353,10 @@ if __name__ == "__main__":
     model_keys = [
         "ideal",
         "content_5",
-        #"content_10",
-        #"pop",
+        "content_10",
+        "pop",
         "mf",
-        #"sf",
+        "sf",
         "random"
     ]
     metric_list = [
@@ -410,14 +410,14 @@ if __name__ == "__main__":
 
         print("Running content 5:")
         models["content_5"] = run_sim(item_representation, sim_users_pairs, random_pairs, init_params, args, rng, model=ContentFilteringWithTags(5))
-        #print("Running content 10:")
-        #models["content_10"] = run_sim(item_representation, sim_users_pairs, random_pairs, init_params, args, rng, model=ContentFilteringWithTags(10))
-        #print("Running pop:")
-        #models["pop"] = run_sim(item_representation, sim_users_pairs, random_pairs, init_params, args, rng, model=PopularityRecommender)
+        print("Running content 10:")
+        models["content_10"] = run_sim(item_representation, sim_users_pairs, random_pairs, init_params, args, rng, model=ContentFilteringWithTags(10))
+        print("Running pop:")
+        models["pop"] = run_sim(item_representation, sim_users_pairs, random_pairs, init_params, args, rng, model=PopularityRecommender)
         print("Running mf:")
         models["mf"] = run_sim(item_representation, sim_users_pairs, random_pairs, init_params, args, rng, model=ImplicitMF)
-        #print("Running sf:")
-        #models["sf"] = run_sim(item_representation, sim_users_pairs, random_pairs, init_params, args, rng, model=SocialFiltering, user_representation=social_network)
+        print("Running sf:")
+        models["sf"] = run_sim(item_representation, sim_users_pairs, random_pairs, init_params, args, rng, model=SocialFiltering, user_representation=social_network)
         print("Running random:")
         models["random"] = run_sim(item_representation, sim_users_pairs, random_pairs, init_params, args, rng, model=RandomRecommender)
 
