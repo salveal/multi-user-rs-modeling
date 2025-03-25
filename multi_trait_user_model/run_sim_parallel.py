@@ -34,7 +34,7 @@ from mtu_utils import (
     gen_social_network_1_attr,
     distances_from_users_to_mean_user,
     measures_of_distances_from_consumed_items_to_mean_item,
-    interleave_new_items as startp_interleave_fn
+    interleave_new_items as startup_interleave_fn
 )
 import argparse
 import os
@@ -127,7 +127,7 @@ def run_ideal_sim(thread_id, user_prefs, true_utils, init_params, args, lock=Non
         "num_items_per_iter": "all",
         "num_users": args["num_users"],
         "num_items": 0,
-        "interleaving_fn": startp_interleave_fn(rng),
+        "interleaving_fn": startup_interleave_fn(rng),
         "verbose": True,
         "seed": init_params["seed"]
     }
@@ -197,7 +197,7 @@ def run_sim(thread_id, item_attrs, init_params, args, model=ContentFiltering, us
         "num_items_per_iter": "all",
         "num_users": args["num_users"],
         "num_items": 0,
-        "interleaving_fn": startp_interleave_fn(rng),
+        "interleaving_fn": startup_interleave_fn(rng),
         "verbose": True,
         "seed": init_params["seed"]
     }
@@ -264,7 +264,6 @@ def simulation_function(t, world_params, true_user_items_per_sim, args, lock, lo
     print("Starting simulation", t)
     users, true_utils, known_utils, items, social_networks, mo_to_object, model_keys = world_params.values()
 
-    # TODO: Randomizar según nombre, no posición en la lista de model_keys
     sim_seed = (args["seed"] + string_to_unique_int(t[0])%10000)*(len(model_keys)*t[1] + 1) 
 
     true_prefs = users[t[1]]

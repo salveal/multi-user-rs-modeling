@@ -211,4 +211,4 @@ def get_sim_users_pairs(user_prefs, rng=Generator(1234), remove_duplicates=True)
         pairs = [tuple(x) if len(tuple(x)) == 2 else (tuple(x)[0], tuple(x)[0]) for x in set(frozenset(x) for x in pairs)]
     #print("pairs 2:", len(pairs))
 
-    return pairs
+    return np.array(pairs)
