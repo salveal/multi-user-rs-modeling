@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 from trecs.models import ContentFiltering, BaseRecommender
 from trecs.models import ImplicitMF as ImMF
+from trecs.random import Generator
 from scipy.optimize import nnls
 import scipy.sparse as sp
 from sklearn.decomposition import PCA
@@ -121,8 +122,25 @@ def ContentFilteringWithTags(num_tags):
 
 class RandomRecommenderPatched(ContentFiltering):
     """
-    Random recommender - randomly update user representation at every step
+    Random recommender - randomly update user representation, item representation and
+    predicted scores every step
     """
+    def __init__(
+        self,
+        seed=None,
+        **kwargs
+    ):
+        self.score_fn_rng = Generator(seed=seed)
+        def random_score_fn(users, items):
+            predicted_scores = self.score_fn_rng.random((users.shape[0], items.shape[1]))
+            return predicted_scores
+        
+        super().__init__(
+            seed=seed,
+            score_fn=random_score_fn,
+            **kwargs
+        )
+
     def _update_internal_state(self, interactions):
         self.items_hat.value[:, :] = self.random_state.random(self.items_hat.shape)
         self.users_hat.value[:, :] = self.random_state.random(self.users_hat.shape)

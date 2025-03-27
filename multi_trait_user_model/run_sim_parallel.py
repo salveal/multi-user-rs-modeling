@@ -442,14 +442,13 @@ if __name__ == "__main__":
     ###########################
 
     mo_to_object = {
-        #"ideal" : [run_ideal_sim],
-        #"content_5": [run_sim, ContentFilteringWithTags, 5],
-        #"content_10": [run_sim, ContentFilteringWithTags, 10],
-        #"pop": [run_sim, PopularityRecommender],
-        #"mf": [run_sim, ImplicitMF],
-        #"sf": [run_sim, SocialFiltering],
-        "random" : [run_sim, RandomRecommender],
-        "random_patched": [run_sim, RandomRecommenderPatched],
+        "ideal" : [run_ideal_sim],
+        "content_5": [run_sim, ContentFilteringWithTags, 5],
+        "content_10": [run_sim, ContentFilteringWithTags, 10],
+        "pop": [run_sim, PopularityRecommender],
+        "mf": [run_sim, ImplicitMF],
+        "sf": [run_sim, SocialFiltering],
+        "random" : [run_sim, RandomRecommenderPatched],
     }
 
     model_keys = list(mo_to_object.keys())
@@ -486,7 +485,7 @@ if __name__ == "__main__":
 
     print("Running simulations...👟")
     task_args = [(t, world_params, true_user_items_per_sim, args, lock, lock2) for t in threads]
-    with Pool(processes=4) as pool:
+    with Pool(processes=8) as pool:
         pool.starmap(simulation_function, task_args)
 
     print("Getting results...")
