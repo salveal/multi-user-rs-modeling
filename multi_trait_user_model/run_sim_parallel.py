@@ -6,7 +6,6 @@ from trecs.models import (
     ContentFiltering,
     PopularityRecommender,
     SocialFiltering,
-    ImplicitMF
 )
 from trecs.random import Generator
 from mtu_creators import NewItemFactory
@@ -22,7 +21,9 @@ from mtu_rs import (
     IdealRecommender,
     ChaneyContent,
     RandomRecommender,
-    ContentFilteringWithTags
+    ContentFilteringWithTags,
+    RandomRecommenderPatched,
+    ImplicitMF,
 )
 from mtu_users import MultiTraitUsers
 from mtu_utils import (
@@ -201,12 +202,12 @@ def run_sim(thread_id, item_attrs, init_params, args, model=ContentFiltering, us
         "verbose": True,
         "seed": init_params["seed"]
     }
-    model_params["score_fn"] = exclude_new_items(args["new_items_per_iter"])
+    #model_params["score_fn"] = exclude_new_items(args["new_items_per_iter"])
     if model != PopularityRecommender:
         if model != SocialFiltering:
             if model != ImplicitMF:
                 model_params["num_attributes"] = args["num_attrs"]
-                if model != RandomRecommender:
+                if not (model == RandomRecommender or model == RandomRecommenderPatched):
                     model_params["item_rep_for_threshold"] = item_attrs
             else:
                 model_params["num_latent_factors"] = args["num_attrs"] if args["num_attrs"] > 2 else 10
@@ -441,13 +442,14 @@ if __name__ == "__main__":
     ###########################
 
     mo_to_object = {
-        "ideal" : [run_ideal_sim],
-        "content_5": [run_sim, ContentFilteringWithTags, 5],
-        "content_10": [run_sim, ContentFilteringWithTags, 10],
-        "pop": [run_sim, PopularityRecommender],
-        "mf": [run_sim, ImplicitMF],
-        "sf": [run_sim, SocialFiltering],
+        #"ideal" : [run_ideal_sim],
+        #"content_5": [run_sim, ContentFilteringWithTags, 5],
+        #"content_10": [run_sim, ContentFilteringWithTags, 10],
+        #"pop": [run_sim, PopularityRecommender],
+        #"mf": [run_sim, ImplicitMF],
+        #"sf": [run_sim, SocialFiltering],
         "random" : [run_sim, RandomRecommender],
+        "random_patched": [run_sim, RandomRecommenderPatched],
     }
 
     model_keys = list(mo_to_object.keys())
@@ -484,7 +486,7 @@ if __name__ == "__main__":
 
     print("Running simulations...👟")
     task_args = [(t, world_params, true_user_items_per_sim, args, lock, lock2) for t in threads]
-    with Pool(processes=8) as pool:
+    with Pool(processes=4) as pool:
         pool.starmap(simulation_function, task_args)
 
     print("Getting results...")

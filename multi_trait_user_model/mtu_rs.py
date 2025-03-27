@@ -1,9 +1,12 @@
 import numpy as np
+import pandas as pd
 from trecs.models import ContentFiltering, BaseRecommender
+from trecs.models import ImplicitMF as ImMF
 from scipy.optimize import nnls
 import scipy.sparse as sp
 from sklearn.decomposition import PCA
 from sklearn import preprocessing
+import warnings
 
 """
 RSs taken from algo_confounding
@@ -115,3 +118,59 @@ def ContentFilteringWithTags(num_tags):
             return reduced_dimension_items
     return ContentFilteringReduced
  
+
+class RandomRecommenderPatched(ContentFiltering):
+    """
+    Random recommender - randomly update user representation at every step
+    """
+    def _update_internal_state(self, interactions):
+        self.items_hat.value[:, :] = self.random_state.random(self.items_hat.shape)
+        self.users_hat.value[:, :] = self.random_state.random(self.users_hat.shape)
+
+    def process_new_items(self, new_items):
+        """
+        Generate random attributes for new items.
+        """
+        num_items = new_items.shape[1]
+        num_attr = self.items_hat.value.shape[0]
+        item_representation = self.random_state.random((num_attr, num_items))
+        return item_representation
+    
+    def train(self):
+        """
+        Custom method, it bypasses ContentFiltering's train method
+        to assure randomness
+        """
+        BaseRecommender.train(self)
+
+class ImplicitMF(ImMF):
+    def run(
+        self,
+        timesteps=50,
+        startup=False,
+        train_between_steps=False,
+        random_items_per_iter=0,
+        vary_random_items_per_iter=False,
+        repeated_items=True,
+        no_new_items=False,
+        reset_interactions=True,
+        **kwargs,
+    ):
+        if train_between_steps:
+            warnings.warn(
+                "train_between_steps is set to True. Note that, at each step, this "
+                "overwrites the MF model with a model fit only to the latest interaction. "
+                "To avoid this behavior, set train_between_steps to False."
+            )
+        if reset_interactions:
+            self.all_interactions = pd.DataFrame(columns=["user", "item"])
+        super().run(
+            timesteps,
+            startup,
+            train_between_steps,
+            random_items_per_iter,
+            vary_random_items_per_iter,
+            repeated_items,
+            no_new_items=no_new_items,
+            **kwargs
+        )
