@@ -182,7 +182,8 @@ class ImplicitMF(ImMF):
             )
         if reset_interactions:
             self.all_interactions = pd.DataFrame(columns=["user", "item"])
-        super().run(
+        BaseRecommender.run(
+            self,
             timesteps,
             startup,
             train_between_steps,
